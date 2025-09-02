@@ -139,6 +139,7 @@ public class ConsoleApp
                 "m" when options.HasFlag(CommonActions.RenewPatronMembership) => CommonActions.RenewPatronMembership,
                 "e" when options.HasFlag(CommonActions.ExtendLoanedBook) => CommonActions.ExtendLoanedBook,
                 "r" when options.HasFlag(CommonActions.ReturnLoanedBook) => CommonActions.ReturnLoanedBook,
+                "b" when options.HasFlag(CommonActions.SearchBooks) => CommonActions.SearchBooks,
                 _ when int.TryParse(userInput, out optionNumber) => CommonActions.Select,
                 _ => CommonActions.Repeat
             };
@@ -165,6 +166,10 @@ public class ConsoleApp
         if (options.HasFlag(CommonActions.RenewPatronMembership))
         {
             Console.WriteLine(" - \"m\" to extend patron's membership");
+        }
+        if (options.HasFlag(CommonActions.SearchBooks))
+        {
+            Console.WriteLine(" - \"b\" to check for book availability");
         }
         if (options.HasFlag(CommonActions.SearchPatrons))
         {
@@ -193,7 +198,7 @@ public class ConsoleApp
             loanNumber++;
         }
 
-        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.Select | CommonActions.RenewPatronMembership;
+        CommonActions options = CommonActions.SearchPatrons | CommonActions.Quit | CommonActions.Select | CommonActions.RenewPatronMembership | CommonActions.SearchBooks;
         CommonActions action = ReadInputOptions(options, out int selectedLoanNumber);
         if (action == CommonActions.Select)
         {
@@ -225,8 +230,104 @@ public class ConsoleApp
             selectedPatronDetails = (await _patronRepository.GetPatron(selectedPatronDetails.Id))!;
             return ConsoleState.PatronDetails;
         }
+        else if (action == CommonActions.SearchBooks)
+        {
+            return await SearchBooks();
+        }
 
         throw new InvalidOperationException("An input option is not handled.");
+    }
+    async Task<ConsoleState> SearchBooks()
+    {
+        string? bookTitle = null;
+        while (string.IsNullOrWhiteSpace(bookTitle))
+        {
+            Console.Write("Enter a book title to search for: ");
+            bookTitle = Console.ReadLine();
+        }
+
+        // We don't have a direct book repository, so we'll use what we have
+        // Get all loans to find books by examining each loan's book details
+        bool foundMatchingBooks = false;
+
+        // Use the current patron's loans to access book information
+        if (selectedPatronDetails != null && selectedPatronDetails.Loans != null)
+        {
+            var matchingLoans = selectedPatronDetails.Loans
+                .Where(l => l.BookItem?.Book?.Title.Contains(bookTitle, StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+
+            if (matchingLoans.Count > 0)
+            {
+                foundMatchingBooks = true;
+                Console.WriteLine($"Found {matchingLoans.Count} book(s) matching: {bookTitle}");
+                Console.WriteLine();
+
+                foreach (var loan in matchingLoans)
+                {
+                    var book = loan.BookItem!.Book!;
+                    Console.WriteLine($"Title: {book.Title}");
+                    Console.WriteLine($"Author: {book.Author?.Name ?? "Unknown"}");
+
+                    // Check if the book is already on loan to someone else
+                    if (loan.ReturnDate == null)
+                    {
+                        Console.WriteLine($"{book.Title} is on loan to you. The return due date is {loan.DueDate.ToShortDateString()}.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"{book.Title} was previously borrowed by you and was returned on {loan.ReturnDate.Value.ToShortDateString()}.");
+                    }
+                    Console.WriteLine();
+                }
+            }
+        }
+
+        // Also search for books in other patrons' loans to find books not borrowed by the current patron
+        var allPatrons = await _patronRepository.SearchPatrons("");
+        foreach (var patron in allPatrons)
+        {
+            if (patron.Id == selectedPatronDetails?.Id)
+                continue; // Skip current patron, already processed
+
+            var patronDetails = await _patronRepository.GetPatron(patron.Id);
+            if (patronDetails == null || patronDetails.Loans == null)
+                continue;
+
+            var matchingLoans = patronDetails.Loans
+                .Where(l => l.BookItem?.Book?.Title.Contains(bookTitle, StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+
+            if (matchingLoans.Count > 0)
+            {
+                foundMatchingBooks = true;
+
+                foreach (var loan in matchingLoans)
+                {
+                    var book = loan.BookItem!.Book!;
+                    Console.WriteLine($"Title: {book.Title}");
+                    Console.WriteLine($"Author: {book.Author?.Name ?? "Unknown"}");
+
+                    // Check if the book is available or on loan
+                    if (loan.ReturnDate == null)
+                    {
+                        Console.WriteLine($"{book.Title} is on loan to another patron. The return due date is {loan.DueDate.ToShortDateString()}.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"{book.Title} is available for loan.");
+                    }
+                    Console.WriteLine();
+                }
+            }
+        }
+
+        if (!foundMatchingBooks)
+        {
+            Console.WriteLine($"No books found matching title: {bookTitle}");
+        }
+
+        return ConsoleState.PatronDetails;
     }
 
     async Task<ConsoleState> LoanDetails()

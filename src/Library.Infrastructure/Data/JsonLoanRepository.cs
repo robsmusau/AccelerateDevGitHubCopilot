@@ -52,4 +52,9 @@ public class JsonLoanRepository : ILoanRepository
             await _jsonData.LoadData();
         }
     }
+
+    public JsonData GetJsonData()
+    {
+        return _jsonData;
+    }
 }
